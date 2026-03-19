@@ -99,6 +99,12 @@ Fluxo logico:
 - modelo gera resposta usando contexto recuperado
 - historico e documentos ficam persistidos no banco
 
+Camada RAG atual:
+- uploads e scrapes sao indexados em chunks menores com overlap
+- a busca vetorial trabalha sobre chunks em vez de documentos inteiros
+- a recuperacao global aplica filtro de similaridade minima
+- o contexto enviado ao modelo e montado com origem e relevancia dos trechos
+
 ## 🔌 Endpoints principais
 
 ### POST /chat
@@ -146,6 +152,7 @@ curl -X POST http://localhost:8000/scrape \
 Comportamento atual do endpoint:
 - faz cache por URL (reaproveita conteudo ja indexado)
 - extrai e trunca texto grande para manter performance
+- indexa o conteudo em chunks com overlap
 - inicia indexacao de embeddings em background
 - retorna sucesso rapidamente, sem bloquear ate o embedding terminar
 
@@ -222,6 +229,11 @@ Tabela `documents`:
 - metadata JSONB
 - embedding vector(4096)
 - created_at, updated_at
+
+Observacao sobre o RAG atual:
+- cada documento logico pode gerar varios registros na tabela `documents`
+- os chunks sao agrupados por metadados como `document_group_id`, `chunk_index` e `chunk_count`
+- isso melhora a recuperacao de trechos especificos em PDFs e paginas longas
 
 Tabela `chat_history`:
 - id SERIAL PRIMARY KEY
@@ -327,6 +339,14 @@ docker compose exec -T postgres psql -U postgres -d chatbot -c "SELECT COUNT(*) 
 - Scrape de URL para ingestao em RAG (com cache e indexacao em background)
 - Ingestao automatica da `SCRAPE_URL` no startup da API
 - Embeddings 4096-dim com busca vetorial
+- Chunking com overlap para upload e scraping
+- Recuperacao por chunks com filtro de similaridade minima
+- Contexto estruturado com origem e relevancia dos trechos
 - LLM local com Ollama
+
+Tradeoff atual:
+- a qualidade de recuperacao melhorou em relacao ao fluxo inicial de documento inteiro
+- pode haver pequeno aumento no custo de indexacao e busca
+- na pratica, o maior gargalo continua sendo a geracao do Ollama, nao o RAG
 
 Versao 1.0.0 - Marco 2026

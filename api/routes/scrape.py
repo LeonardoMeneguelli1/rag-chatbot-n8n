@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from logger import logger
 from exceptions import ScrapeException
 from config import SCRAPE_TIMEOUT, SCRAPE_USER_AGENT
-from services.rag import get_latest_scrape_document_by_url, save_document
+from services.rag import get_latest_scrape_document_by_url, save_document_chunks
 
 
 SCRAPE_TEXT_LIMIT = 12000
@@ -15,11 +15,14 @@ SCRAPE_TEXT_LIMIT = 12000
 def _persist_scrape_async(content: str, url: str) -> None:
     def _save() -> None:
         try:
-            doc_id = save_document(
+            result = save_document_chunks(
                 content=content,
                 metadata={"source": "scrape", "url": url}
             )
-            logger.info(f"Scrape armazenado em background (Doc ID: {doc_id})")
+            logger.info(
+                f"Scrape armazenado em background "
+                f"(Grupo: {result['document_group_id']}, chunks: {result['chunk_count']})"
+            )
         except Exception as e:
             logger.error(f"Erro ao armazenar scrape em background: {e}")
 

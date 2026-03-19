@@ -4,11 +4,12 @@ from typing import Optional
 from logger import logger
 from exceptions import OllamaException
 from services.rag import (
+    GLOBAL_RAG_MIN_SIMILARITY,
     get_latest_session_document,
     get_recent_chat_history,
     save_chat_history,
-    save_document,
-    search_similar,
+    save_document_chunks,
+    search_similar_chunks,
 )
 from services.file_parser import parse_file
 from config import OLLAMA_MODEL
@@ -26,6 +27,46 @@ RECENT_HISTORY_LIMIT = 10
 GLOBAL_RAG_RESULT_LIMIT = 3
 GLOBAL_RAG_CONTEXT_LIMIT = 3500
 MAX_RESPONSE_TOKENS = 180
+
+
+def _format_source_label(metadata: dict) -> str:
+    source = metadata.get("source") or metadata.get("type") or "documento"
+
+    if source == "scrape":
+        return metadata.get("url") or "URL desconhecida"
+
+    if source == "upload":
+        return metadata.get("filename") or "arquivo enviado"
+
+    return metadata.get("filename") or metadata.get("url") or "fonte desconhecida"
+
+
+def _format_search_results(results: list[dict], max_chars: int) -> str:
+    if not results:
+        return ""
+
+    sections = []
+    used_chars = 0
+
+    for index, item in enumerate(results, start=1):
+        metadata = item.get("metadata", {})
+        score = item.get("similarity", 0.0)
+        snippet = item.get("content", "")
+        section = (
+            f"Fonte {index}\n"
+            f"Origem: {_format_source_label(metadata)}\n"
+            f"Relevancia: {score:.2f}\n"
+            f"Trecho: {snippet}"
+        )
+
+        projected_size = used_chars + len(section)
+        if sections and projected_size > max_chars:
+            break
+
+        sections.append(section)
+        used_chars = projected_size
+
+    return "\n\n".join(sections)
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
@@ -51,15 +92,19 @@ def _format_recent_history(session_id: str) -> str:
 def _persist_document_async(content: str, file_name: str, session_id: str) -> None:
     def _save() -> None:
         try:
-            doc_id = save_document(
+            result = save_document_chunks(
                 content=content,
                 metadata={
+                    "source": "upload",
                     "type": "upload",
                     "filename": file_name,
                     "session_id": session_id,
                 }
             )
-            logger.info(f"Arquivo processado e armazenado em background (Doc ID: {doc_id})")
+            logger.info(
+                "Arquivo processado e armazenado em background "
+                f"(Grupo: {result['document_group_id']}, chunks: {result['chunk_count']})"
+            )
         except Exception as e:
             logger.error(f"Erro ao salvar documento em background: {e}")
 
@@ -106,19 +151,24 @@ def chat(
                 document_context = _truncate_text(active_document, ACTIVE_DOCUMENT_CONTEXT_LIMIT)
             else:
                 logger.debug("Sem documento na sessão; executando busca RAG global")
-                from services.rag import GLOBAL_RAG_MIN_SIMILARITY
-                global_context = search_similar(
+                search_results = search_similar_chunks(
                     question,
                     limit=GLOBAL_RAG_RESULT_LIMIT,
                     exclude_session_docs=True,
                     min_similarity=GLOBAL_RAG_MIN_SIMILARITY
                 )
+                global_context = _format_search_results(search_results, GLOBAL_RAG_CONTEXT_LIMIT)
                 if global_context:
-                    document_context = _truncate_text(global_context, GLOBAL_RAG_CONTEXT_LIMIT)
+                    document_context = global_context
 
         if document_context:
-            prompt = f"""Use o contexto abaixo para responder à pergunta de forma precisa e útil.
-Responda de forma objetiva em no máximo 6 frases.
+            prompt = f"""Você é um assistente que responde usando prioritariamente o contexto fornecido.
+
+Regras:
+- Use o contexto quando ele for suficiente.
+- Não invente fatos que não estejam no contexto.
+- Se o contexto for insuficiente, deixe isso explícito.
+- Responda de forma objetiva em no máximo 6 frases.
 
 Histórico recente:
 {recent_history}
@@ -131,6 +181,7 @@ Pergunta:
         else:
             logger.debug("Sem contexto documental relevante; respondendo com conhecimento próprio")
             prompt = f"""Responda à pergunta abaixo com base no seu próprio conhecimento.
+Se não tiver segurança, deixe claro que a resposta é geral e não baseada em documentos da base.
 Responda de forma objetiva em no máximo 6 frases.
 
 Histórico recente:

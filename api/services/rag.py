@@ -2,7 +2,8 @@
 
 import time
 import json
-from typing import List, Optional
+import uuid
+from typing import Any, List, Optional
 from database.connection import get_connection
 from services.embeddings import generate_embedding
 from logger import logger
@@ -10,16 +11,126 @@ from exceptions import DatabaseException, EmbeddingException
 
 
 GLOBAL_RAG_MIN_SIMILARITY = 0.3
+DEFAULT_CHUNK_SIZE = 1000
+DEFAULT_CHUNK_OVERLAP = 250
+DEFAULT_SEARCH_CANDIDATES = 8
 
 
-def search_similar(
+def chunk_text(
+    content: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+) -> list[str]:
+    normalized = " ".join(content.split())
+    if not normalized:
+        return []
+
+    if len(normalized) <= chunk_size:
+        return [normalized]
+
+    chunks = []
+    start = 0
+
+    while start < len(normalized):
+        end = min(start + chunk_size, len(normalized))
+        chunk = normalized[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= len(normalized):
+            break
+
+        start = max(end - chunk_overlap, start + 1)
+
+    return chunks
+
+
+def _insert_document_chunk(content: str, metadata: Optional[dict] = None) -> int:
+    embedding = generate_embedding(content)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO documents (content, metadata, embedding)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (content, json.dumps(metadata or {}), str(embedding))
+        )
+
+        doc_id = cursor.fetchone()[0]
+        conn.commit()
+        return doc_id
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Erro ao inserir chunk do documento: {e}")
+        raise DatabaseException(f"Erro ao salvar chunk do documento: {e}") from e
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def save_document_chunks(
+    content: str,
+    metadata: Optional[dict] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+) -> dict[str, Any]:
+    try:
+        base_metadata = dict(metadata or {})
+        chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+        if not chunks:
+            raise DatabaseException("Conteúdo vazio para indexação")
+
+        document_group_id = str(uuid.uuid4())
+        chunk_ids = []
+
+        logger.debug(
+            f"Salvando documento em chunks ({len(content)} caracteres, {len(chunks)} chunk(s))..."
+        )
+
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_metadata = {
+                **base_metadata,
+                "document_group_id": document_group_id,
+                "chunk_index": index,
+                "chunk_count": len(chunks),
+            }
+            chunk_ids.append(_insert_document_chunk(chunk, chunk_metadata))
+
+        logger.info(
+            f"Documento salvo em {len(chunks)} chunk(s) com sucesso "
+            f"(Grupo: {document_group_id})"
+        )
+
+        return {
+            "document_group_id": document_group_id,
+            "chunk_ids": chunk_ids,
+            "chunk_count": len(chunks),
+        }
+
+    except (DatabaseException, EmbeddingException):
+        raise
+    except Exception as e:
+        logger.error(f"Erro inesperado ao salvar documento em chunks: {e}")
+        raise DatabaseException(f"Erro inesperado: {e}") from e
+
+
+def search_similar_chunks(
     text: str,
     limit: int = 5,
+    search_candidates: int = DEFAULT_SEARCH_CANDIDATES,
     max_retries: int = 5,
     retry_delay: int = 2,
     exclude_session_docs: bool = False,
     min_similarity: float = 0.0
-) -> Optional[str]:
+) -> list[dict[str, Any]]:
     try:
         logger.debug("Gerando embedding para busca vetorial")
         embedding = generate_embedding(text)
@@ -47,7 +158,7 @@ def search_similar(
                 raise DatabaseException(
                     "Não foi possível conectar ao banco para busca"
                 ) from e
-    
+
     if not conn:
         raise DatabaseException("Conexão com banco não estabelecida")
 
@@ -55,36 +166,64 @@ def search_similar(
         cursor = conn.cursor()
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
-        logger.debug(f"Executando busca vetorial (limit={limit}, exclude_session_docs={exclude_session_docs})...")
+        logger.debug(
+            "Executando busca vetorial "
+            f"(limit={limit}, search_candidates={search_candidates}, "
+            f"exclude_session_docs={exclude_session_docs})..."
+        )
+
         where_clause = "WHERE metadata->>'session_id' IS NULL" if exclude_session_docs else ""
         cursor.execute(
             f"""
-            SELECT content, 1 - (embedding <-> %s) as similarity
+            SELECT content, metadata, 1 - (embedding <-> %s) as similarity
             FROM documents
             {where_clause}
             ORDER BY embedding <-> %s
             LIMIT %s
             """,
-            (embedding_str, embedding_str, limit)
+            (embedding_str, embedding_str, search_candidates)
         )
-        
-        results = cursor.fetchall()
-        logger.debug(f"Busca retornou {len(results)} resultado(s)")
 
-        if not results:
+        rows = cursor.fetchall()
+        logger.debug(f"Busca retornou {len(rows)} candidato(s)")
+
+        if not rows:
             logger.warning("Nenhum documento encontrado para a busca")
-            return None
+            return []
 
-        if min_similarity > 0.0:
-            results = [(content, sim) for content, sim in results if sim >= min_similarity]
-            logger.debug(f"{len(results)} resultado(s) passaram o threshold de similaridade ({min_similarity})")
+        results = []
+        seen_keys = set()
 
-        if not results:
-            logger.warning("Nenhum resultado acima do threshold de similaridade")
-            return None
+        for content, metadata, similarity in rows:
+            metadata_dict = metadata or {}
+            if isinstance(metadata_dict, str):
+                metadata_dict = json.loads(metadata_dict)
 
-        concatenated = "\n\n---\n\n".join([r[0] for r in results])
-        return concatenated
+            if min_similarity > 0.0 and similarity < min_similarity:
+                continue
+
+            dedupe_key = (
+                metadata_dict.get("document_group_id"),
+                metadata_dict.get("chunk_index"),
+                content[:120],
+            )
+            if dedupe_key in seen_keys:
+                continue
+
+            seen_keys.add(dedupe_key)
+            results.append(
+                {
+                    "content": content,
+                    "metadata": metadata_dict,
+                    "similarity": float(similarity),
+                }
+            )
+
+            if len(results) >= limit:
+                break
+
+        logger.debug(f"Busca retornou {len(results)} resultado(s) finais")
+        return results
 
     except Exception as e:
         logger.error(f"Erro ao executar busca vetorial: {e}")
@@ -95,6 +234,29 @@ def search_similar(
         conn.close()
 
 
+def search_similar(
+    text: str,
+    limit: int = 5,
+    max_retries: int = 5,
+    retry_delay: int = 2,
+    exclude_session_docs: bool = False,
+    min_similarity: float = 0.0
+) -> Optional[str]:
+    results = search_similar_chunks(
+        text=text,
+        limit=limit,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        exclude_session_docs=exclude_session_docs,
+        min_similarity=min_similarity,
+    )
+
+    if not results:
+        return None
+
+    return "\n\n---\n\n".join(item["content"] for item in results)
+
+
 def get_latest_session_document(session_id: str) -> Optional[str]:
     try:
         conn = get_connection()
@@ -103,7 +265,7 @@ def get_latest_session_document(session_id: str) -> Optional[str]:
         try:
             cursor.execute(
                 """
-                SELECT content
+                SELECT metadata->>'document_group_id', content
                 FROM documents
                 WHERE metadata->>'session_id' = %s
                 ORDER BY created_at DESC, id DESC
@@ -113,7 +275,25 @@ def get_latest_session_document(session_id: str) -> Optional[str]:
             )
 
             row = cursor.fetchone()
-            return row[0] if row else None
+            if not row:
+                return None
+
+            document_group_id, fallback_content = row
+            if not document_group_id:
+                return fallback_content
+
+            cursor.execute(
+                """
+                SELECT content
+                FROM documents
+                WHERE metadata->>'document_group_id' = %s
+                ORDER BY (metadata->>'chunk_index')::int ASC, id ASC
+                """,
+                (document_group_id,)
+            )
+
+            chunks = [chunk_row[0] for chunk_row in cursor.fetchall()]
+            return "\n\n".join(chunks) if chunks else fallback_content
 
         finally:
             cursor.close()
@@ -131,35 +311,10 @@ def save_document(
     try:
         logger.debug(f"Salvando documento ({len(content)} caracteres)...")
 
-        embedding = generate_embedding(content)
+        doc_id = _insert_document_chunk(content, metadata)
 
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                """
-                INSERT INTO documents (content, metadata, embedding)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                (content, json.dumps(metadata or {}), str(embedding))
-            )
-            
-            doc_id = cursor.fetchone()[0]
-            conn.commit()
-
-            logger.info(f"Documento salvo com sucesso (ID: {doc_id})")
-            return doc_id
-
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Erro ao inserir documento: {e}")
-            raise DatabaseException(f"Erro ao salvar documento: {e}") from e
-
-        finally:
-            cursor.close()
-            conn.close()
+        logger.info(f"Documento salvo com sucesso (ID: {doc_id})")
+        return doc_id
 
     except (DatabaseException, EmbeddingException):
         raise
