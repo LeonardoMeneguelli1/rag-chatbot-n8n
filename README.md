@@ -2,11 +2,11 @@
 
 Pipeline completo de IA conversacional com RAG: API para chat, ingestao de documentos, ingestao web por scraping, banco vetorial para recuperacao de contexto e orquestracao via n8n.
 
-## � Demo
+## 🎬 Demo
 
-<video src="assets/demo.mp4" controls width="100%"></video>
+https://github.com/user-attachments/assets/1c512562-d321-4ef1-bc16-54ce6a390563
 
-## �🎯 Objetivo do projeto
+## 🎯 Objetivo do projeto
 
 Este projeto resolve um problema comum em produtos de IA: responder perguntas com contexto real da sua base (arquivos e web), sem depender apenas do conhecimento generico do modelo.
 
