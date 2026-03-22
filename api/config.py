@@ -3,8 +3,6 @@
 import os
 from typing import Optional
 
-# CONFIGURAÇÕES DE BANCO
-
 DB_HOST: str = os.getenv("DB_HOST", "postgres")
 DB_PORT: int = int(os.getenv("DB_PORT", "5432"))
 DB_NAME: str = os.getenv("DB_NAME", "chatbot")
@@ -15,7 +13,6 @@ DATABASE_URL: str = (
     f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
-# Pool de conexões
 DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "10"))
 DB_ECHO: bool = os.getenv("DB_ECHO", "false").lower() == "true"
 
@@ -24,14 +21,12 @@ OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "180"))
 
-# Modelos suportados: llama3, mistral, phi, neural-chat
 AVAILABLE_MODELS: list = ["llama3", "mistral", "phi", "neural-chat"]
 
 
-EMBEDDING_DIMENSION: int = 4096  # Para Llama 3
+EMBEDDING_DIMENSION: int = 4096
 EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 
-# HuggingFace token (opcional para modelos privados)
 HF_TOKEN: Optional[str] = os.getenv("HF_TOKEN")
 
 
@@ -53,14 +48,11 @@ API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
-# Logs
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO" if not DEBUG else "DEBUG")
 LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
 
-# Máximo de documentos a retornar em RAG
 RAG_MAX_DOCUMENTS: int = int(os.getenv("RAG_MAX_DOCUMENTS", "5"))
 
-# Histórico máximo de mensagens
 MAX_CONVERSATION_HISTORY: int = int(os.getenv("MAX_CONVERSATION_HISTORY", "20"))
 
 

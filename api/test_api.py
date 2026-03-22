@@ -4,7 +4,6 @@ import pytest
 from pathlib import Path
 import sys
 
-# Adiciona diretório ao path para importações
 sys.path.insert(0, str(Path(__file__).parent))
 
 
@@ -73,7 +72,7 @@ class TestModels:
         from pydantic import ValidationError
         
         with pytest.raises(ValidationError):
-            ScrapeRequest(url="example.com")  # Falta https://
+            ScrapeRequest(url="example.com")
 
 
 class TestDatabase:
