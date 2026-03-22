@@ -1,5 +1,4 @@
-"""API Principal do Chatbot com RAG - Litestar."""
-
+import threading
 from typing import Annotated
 from litestar import Litestar, post, get
 from litestar.enums import RequestEncodingType
@@ -14,8 +13,16 @@ from routes.chat import chat
 from routes.scrape import scrape_page
 from config import SCRAPE_URL
 
+
+def _startup_scrape_background(url: str) -> None:
+    try:
+        logger.info(f"Indexando URL de startup em background: {url}")
+        result = scrape_page(url)
+        logger.info(f"Scrape de startup concluido: {result.get('message', 'ok')}")
+    except Exception as e:
+        logger.warning(f"Scrape de startup falhou (nao critico): {e}")
+
 async def inicializar_sistema() -> None:
-    """Hook executado na inicialização do servidor Litestar."""
     logger.info("=" * 50)
     logger.info("Iniciando sistema de Chatbot com RAG")
     logger.info("=" * 50)
@@ -25,12 +32,12 @@ async def inicializar_sistema() -> None:
         init_db()
 
         if SCRAPE_URL:
-            logger.info(f"Indexando URL de startup: {SCRAPE_URL}")
-            try:
-                result = scrape_page(SCRAPE_URL)
-                logger.info(f"Scrape de startup concluido: {result.get('message', 'ok')}")
-            except Exception as e:
-                logger.warning(f"Scrape de startup falhou (nao critico): {e}")
+            threading.Thread(
+                target=_startup_scrape_background,
+                args=(SCRAPE_URL,),
+                daemon=True,
+            ).start()
+            logger.info("Scrape de startup agendado em background")
 
         logger.info("Sistema inicializado com sucesso")
 

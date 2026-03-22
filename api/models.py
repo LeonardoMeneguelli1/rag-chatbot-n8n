@@ -1,5 +1,3 @@
-"""Modelos Pydantic para requisições e respostas da API."""
-
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime

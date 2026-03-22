@@ -1,5 +1,3 @@
-"""Configuração centralizada de logging."""
-
 import logging
 import sys
 from pathlib import Path

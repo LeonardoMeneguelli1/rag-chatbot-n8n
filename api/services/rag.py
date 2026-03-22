@@ -1,5 +1,3 @@
-"""Serviço de busca vetorial com RAG (Retrieval-Augmented Generation)."""
-
 import time
 import json
 import uuid
@@ -81,6 +79,8 @@ def save_document_chunks(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
 ) -> dict[str, Any]:
+    conn = None
+    cursor = None
     try:
         base_metadata = dict(metadata or {})
         chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -95,6 +95,9 @@ def save_document_chunks(
             f"Salvando documento em chunks ({len(content)} caracteres, {len(chunks)} chunk(s))..."
         )
 
+        conn = get_connection()
+        cursor = conn.cursor()
+
         for index, chunk in enumerate(chunks, start=1):
             chunk_metadata = {
                 **base_metadata,
@@ -102,7 +105,19 @@ def save_document_chunks(
                 "chunk_index": index,
                 "chunk_count": len(chunks),
             }
-            chunk_ids.append(_insert_document_chunk(chunk, chunk_metadata))
+
+            embedding = generate_embedding(chunk)
+            cursor.execute(
+                """
+                INSERT INTO documents (content, metadata, embedding)
+                VALUES (%s, %s, %s)
+                RETURNING id
+                """,
+                (chunk, json.dumps(chunk_metadata), str(embedding))
+            )
+            chunk_ids.append(cursor.fetchone()[0])
+
+        conn.commit()
 
         logger.info(
             f"Documento salvo em {len(chunks)} chunk(s) com sucesso "
@@ -116,10 +131,19 @@ def save_document_chunks(
         }
 
     except (DatabaseException, EmbeddingException):
+        if conn:
+            conn.rollback()
         raise
     except Exception as e:
+        if conn:
+            conn.rollback()
         logger.error(f"Erro inesperado ao salvar documento em chunks: {e}")
         raise DatabaseException(f"Erro inesperado: {e}") from e
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def search_similar_chunks(

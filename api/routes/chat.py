@@ -180,9 +180,8 @@ Pergunta:
 {question}"""
         else:
             logger.debug("Sem contexto documental relevante; respondendo com conhecimento próprio")
-            prompt = f"""Responda à pergunta abaixo com base no seu próprio conhecimento.
-Se não tiver segurança, deixe claro que a resposta é geral e não baseada em documentos da base.
-Responda de forma objetiva em no máximo 6 frases.
+            prompt = f"""Você é um assistente direto e natural. Responda de forma objetiva em no máximo 6 frases.
+Não explique que você não tem contexto ou documentos. Apenas responda normalmente.
 
 Histórico recente:
 {recent_history}

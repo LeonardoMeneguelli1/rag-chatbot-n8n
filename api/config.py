@@ -1,5 +1,3 @@
-"""Configuração centralizada daaplicação."""
-
 import os
 from typing import Optional
 

@@ -1,5 +1,3 @@
-"""Testes básicos para a API do Chatbot."""
-
 import pytest
 from pathlib import Path
 import sys
@@ -45,7 +43,6 @@ class TestFileParser:
 
 
 class TestModels:
-    """Testes de modelos Pydantic."""
     
     def test_chat_request_valid(self):
         from models import ChatRequest

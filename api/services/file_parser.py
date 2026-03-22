@@ -1,5 +1,3 @@
-"""Parse de arquivos em diferentes formatos."""
-
 import pandas as pd
 import pdfplumber
 import io

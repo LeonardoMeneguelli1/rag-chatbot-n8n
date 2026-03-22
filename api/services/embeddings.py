@@ -1,5 +1,3 @@
-"""Geração de embeddings usando Ollama."""
-
 import ollama
 from typing import List
 from logger import logger

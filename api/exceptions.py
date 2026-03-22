@@ -1,6 +1,3 @@
-"""Exceções customizadas da aplicação."""
-
-
 class ChatbotException(Exception):
     pass
 

@@ -1,5 +1,3 @@
-"""Rota para web scraping e armazenamento de conteúdo."""
-
 import threading
 import requests
 from bs4 import BeautifulSoup
@@ -79,7 +77,7 @@ def scrape_page(url: str) -> dict:
 
             logger.debug(f"Conteúdo extraído: {len(text)} caracteres")
 
-        except BeautifulSoup as e:
+        except Exception as e:
             logger.error(f"Erro ao parsear HTML: {e}")
             raise ScrapeException(f"Erro ao parsear HTML: {e}") from e
 
